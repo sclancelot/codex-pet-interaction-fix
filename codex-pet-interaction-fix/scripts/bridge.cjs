@@ -1,0 +1,26 @@
+const fs=require('fs'),path=require('path'),{spawn,execFileSync}=require('child_process');
+const dir=__dirname,stopFile=path.join(dir,'stop.signal');
+const expression=`JSON.stringify((()=>{const scale=devicePixelRatio,rects=[];const els=[...document.querySelectorAll('[data-avatar-overlay-hit-region],[role=menu],[data-radix-popper-content-wrapper]')];for(const e of els){let visible=true;for(let p=e;p;p=p.parentElement){const s=getComputedStyle(p);if(p.inert||s.visibility==='hidden'||s.display==='none'||Number(s.opacity)<.01){visible=false;break;}}if(!visible)continue;const r=e.getBoundingClientRect();if(r.width<=0||r.height<=0)continue;rects.push(Math.max(0,Math.floor((r.left-4)*scale)),Math.max(0,Math.floor((r.top-4)*scale)),Math.min(Math.ceil(innerWidth*scale),Math.ceil((r.right+4)*scale)),Math.min(Math.ceil(innerHeight*scale),Math.ceil((r.bottom+4)*scale)));}return{width:Math.round(innerWidth*scale),height:Math.round(innerHeight*scale),rects};})())`;
+(async()=>{
+ if(process.platform!=='win32'||Number(process.versions.node.split('.')[0])<22)throw Error('Windows and Node.js 22+ required');
+ const check=process.argv.includes('--check');
+ const existing=path.join(dir,'bridge.pid');if(!check&&fs.existsSync(existing)){const n=Number(fs.readFileSync(existing,'utf8'));if(!Number.isSafeInteger(n)||n<=0)throw Error('Invalid helper PID file');try{process.kill(n,0);throw Error('A pet interaction helper is already running')}catch(e){if(e.code!=='ESRCH')throw e;}}
+ if(!check&&fs.existsSync(stopFile))fs.unlinkSync(stopFile);
+ const procs=JSON.parse(execFileSync('powershell.exe',['-NoProfile','-Command',"Get-CimInstance Win32_Process | Where-Object {$_.Name -eq 'ChatGPT.exe' -and $_.ExecutablePath -like '*OpenAI.Codex*' -and $_.CommandLine -notmatch '--type='} | Select-Object ProcessId | ConvertTo-Json -Compress"],{encoding:'utf8',windowsHide:true}));
+ const candidates=(Array.isArray(procs)?procs:[procs]).filter(Boolean);if(candidates.length!==1)throw Error('Expected one Codex desktop process');
+ const owners=JSON.parse(execFileSync('powershell.exe',['-NoProfile','-Command','@(Get-NetTCPConnection -LocalPort 9341 -State Listen -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess -Unique) | ConvertTo-Json -Compress'],{encoding:'utf8',windowsHide:true}));
+ if([].concat(owners).some(n=>n!==candidates[0].ProcessId))throw Error('CDP listener does not belong to the selected Codex process');
+ const targets=await(await fetch('http://127.0.0.1:9341/json/list',{signal:AbortSignal.timeout(3000)}).catch(()=>fetch('http://[::1]:9341/json/list',{signal:AbortSignal.timeout(3000)}))).json();
+ const pages=targets.filter(t=>t.type==='page'&&t.url.includes('initialRoute=%2Favatar-overlay'));if(pages.length!==1)throw Error('Open the Codex pet first; its local debugging page is required');
+ const endpoint=new URL(pages[0].webSocketDebuggerUrl);if(endpoint.protocol!=='ws:'||!['127.0.0.1','[::1]'].includes(endpoint.hostname)||endpoint.port!=='9341')throw Error('Unexpected debugger endpoint');
+ if(check){console.log('Preflight passed: one Codex process and one local pet page. No window state changed.');return;}
+ const ws=new WebSocket(endpoint.href);await new Promise((r,j)=>{const timeout=setTimeout(()=>{ws.close();j(Error('CDP connection timed out'))},5000);ws.onopen=()=>{clearTimeout(timeout);r()};ws.onerror=e=>{clearTimeout(timeout);j(e)}});
+ const nativeArgs=['-NoProfile','-ExecutionPolicy','Bypass','-File',path.join(dir,'native-region.ps1'),'-OwnerPid',String(candidates[0].ProcessId)];if(process.argv.includes('--reset-layer'))nativeArgs.push('-ResetLayer');
+ const native=spawn('powershell.exe',nativeArgs,{windowsHide:true,stdio:['pipe','pipe','pipe']});
+ const startedAt=Date.now();fs.writeFileSync(existing,String(process.pid));let id=0,pending=false,stopping=false,lastReply=startedAt,lastApplied=0,timer;
+ function stop(){if(stopping)return;stopping=true;clearInterval(timer);if(!native.stdin.destroyed)native.stdin.end('stop\n');ws.close();}
+ native.stderr.on('data',b=>console.error(b.toString()));native.stdout.on('data',()=>{lastApplied=Date.now();fs.writeFileSync(path.join(dir,'status.json'),JSON.stringify({pid:process.pid,ownerPid:candidates[0].ProcessId,lastApplied:new Date(lastApplied).toISOString(),scope:'current pet window only'}));});native.on('exit',code=>{stop();try{fs.unlinkSync(existing)}catch{};process.exitCode=code||0;});native.on('error',e=>{console.error(e.message);stop();try{fs.unlinkSync(existing)}catch{};process.exitCode=1});native.stdin.on('error',()=>stop());
+ ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id){pending=false;lastReply=Date.now();if(m.error||m.result?.exceptionDetails){console.error(JSON.stringify(m.error||m.result.exceptionDetails));return stop();}const v=m.result?.result?.value;if(typeof v==='string'&&!stopping)native.stdin.write(v+'\n');}};ws.onclose=stop;
+ timer=setInterval(()=>{if(fs.existsSync(stopFile)||Date.now()-lastReply>10000||Date.now()-(lastApplied||startedAt)>15000)return stop();if(!pending){pending=true;ws.send(JSON.stringify({id:++id,method:'Runtime.evaluate',params:{expression,returnByValue:true}}));}},200);
+ process.on('SIGINT',stop);process.on('SIGTERM',stop);console.log('Pet region tracking started for this Codex session.');
+})().catch(e=>{console.error(e.message);process.exitCode=1});

@@ -1,0 +1,5 @@
+**/scripts/*.log
+**/scripts/status.json
+**/scripts/bridge.pid
+**/scripts/stop.signal
+**/__pycache__/

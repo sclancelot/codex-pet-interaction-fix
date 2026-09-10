@@ -1,35 +1,40 @@
 # Codex Pet Interaction Fix
 
-一个 Codex skill，用于排查和临时处理 Windows 桌面宠物鼠标穿透、无法拖动和悬停失效。
+临时修复 Windows Codex 桌面宠物鼠标穿透、无法拖动和悬停失效。
 
-通过本地 CDP 读取宠物可见区域，每 200 毫秒更新 Windows 窗口区域；不修改客户端安装包或宠物素材，不注册开机启动。
+**默认方案已改为一次性重置：临时清除分层样式，刷新窗口，三秒后恢复，程序随即退出。** 不需要 Node.js、调试端口或常驻脚本，不修改安装包、宠物素材和启动配置。
 
-## 安装
+## 安装和运行
 
 把仓库中的 `codex-pet-interaction-fix` 文件夹复制到 `$CODEX_HOME/skills/`（未设置时为 `~/.codex/skills/`），重新打开 Codex 后调用：
 
 ```text
-$codex-pet-interaction-fix 检查宠物鼠标穿透，并验证拖动和悬停
+$codex-pet-interaction-fix 修复宠物鼠标穿透，使用一次性重置
 ```
 
-也可以让 Codex 的 skill-installer 从本仓库安装 `codex-pet-interaction-fix` 路径。
+也可让 skill-installer 从本仓库安装 `codex-pet-interaction-fix` 路径。
 
-## 环境与直接运行
-
-Windows、Node.js 22+、Windows PowerShell 5.1+。Codex 必须已打开宠物，并在本机 9341 端口启用调试。脚本不自动重启 Codex，也不自动配置此端口。
-
-在 skill 文件夹中运行：
+需要 Windows、64 位 Windows PowerShell 5.1+，先在 Codex 中显示宠物。在 skill 文件夹中运行：
 
 ```powershell
-node scripts/bridge.cjs --check
-powershell -NoProfile -File scripts/start.ps1
-powershell -NoProfile -File scripts/stop.ps1
+# 只检查目标
+powershell -NoProfile -File scripts/reset-pet-once.ps1 -InspectOnly
+# 重置并退出，无需另行停止
+powershell -NoProfile -File scripts/reset-pet-once.ps1
 ```
 
-仅当基础处理无效、诊断符合窗口命中错位时，停止旧实例后可测试 `start.ps1 -ResetLayer`。运行状态和错误日志在 `scripts/`，已排除出 Git。
+当前脚本识别 Windows Store 安装路径下的 ChatGPT.exe，要求主进程及可见分层置顶工具窗口均唯一，不能唯一识别时拒绝修改。运行前确认该窗口是宠物，未打开语音球等其他悬浮工具。其他安装路径和进程名尚不支持。
 
-## 验证范围
+## 验证与限制
 
-原始手工修复在 Windows Store Codex 26.901.6511.0 上由用户确认恢复交互，随后启用了位置跟踪。该成功过程包含多个操作；**没有证明单独运行区域跟踪就能修复所有同类故障**。打包后的启动/停止流程和原生辅助程序另做本地验证，不能替代每台机器上的拖动、悬停和空白区域穿透测试。
+2026-09-10，在 Windows Store Codex **26.901.6511.0** 上执行一次性重置，同一窗口的原样式和结束样式均为 `0x2800A8`；工具正常退出，复查无残留修复进程。用户对悬停、右键、连续拖动两次和周边空白点击的验收问题确认：**“交互恢复，旁边也能正常点击”。**
 
-这是当前会话的实验性兼容方案。客户端关闭或宠物页面销毁后退出。区域同时影响绘制，未来版本、快速拖动、混合 DPI 和新控件均需复测。完整边界见 [诊断说明](codex-pet-interaction-fix/references/diagnosis.md)。
+这证明本次恢复有效，**不代表永久修复，也未验证重启后仍有效**。重建宠物窗口或重启后可能复发，届时可再次运行。不要为此注册常驻程序或开机任务。
+
+脚本保留 WS_EX_TRANSPARENT，在 finally 中恢复 WS_EX_LAYERED，不持续取消透明区域命中规则。三秒测试期间可能短暂影响周边点击；若强制终止导致未恢复，关闭再打开宠物以重建窗口。每次执行后均需验证实际交互和空白区域点击。
+
+## 旧方案
+
+start.ps1、stop.ps1、bridge.cjs、native-region.ps1 保留作历史备选：需要 Node.js 22+ 和本机 CDP 9341，每 200 毫秒跟踪窗口区域，运行期间有常驻进程。**不再作为默认方案，也不符合“不运行常驻脚本”的要求。** 先停止旧实例，再测试一次性重置。
+
+详情见[诊断说明](codex-pet-interaction-fix/references/diagnosis.md)和[历史方案](codex-pet-interaction-fix/references/legacy-tracker.md)。

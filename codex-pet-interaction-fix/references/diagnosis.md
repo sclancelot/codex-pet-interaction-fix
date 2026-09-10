@@ -1,5 +1,15 @@
 # Evidence and limits
 
+## One-shot reset (default since 2026-09-10)
+
+On Windows Store Codex 26.901.6511.0, reset-pet-once.ps1 temporarily cleared only WS_EX_LAYERED, refreshed the frame, waited three seconds, then restored that bit and exited. The same HWND read 0x2800A8 before and after. No repair helper remained running. In response to a request to test hover, right-click, two consecutive drags and clicks outside the pet, the user confirmed that interaction and surrounding clicks worked. The published script is identical to that tested script.
+
+This verifies recovery in that session only. Restart persistence, other versions and display configurations remain unverified. It neither proves a universal root cause nor guarantees a permanent fix. The script identifies a unique visible layered/topmost tool window in a unique Store Codex desktop process; these style predicates do not prove pet identity. Establish the visible tool is the pet before applying, and do not run against an active voice orb.
+
+Related first-hand reports: https://github.com/openai/codex/issues/43200 . Leaving WS_EX_LAYERED removed can cause surrounding transparent areas to intercept input; the one-shot test instead restores it. Do not forcibly terminate during the reset. If restoration is interrupted, recreate the pet window.
+
+## Historical combined repair and resident tracker
+
 Observed on Codex Windows Store build 26.901.6511.0: the pet rendered at the bottom right while an OS `WindowFromPoint` grid selected the overlay only in an upper-left rectangle. The overlay was visible and its extended style could lack `WS_EX_TRANSPARENT` despite the failure. The user had already tried 100% scaling without improvement.
 
 The successful session included a temporary layered-style clear/restore, a fresh renderer-region submission, and a native `SetWindowRgn` at the visible pet coordinates. The user then confirmed that interaction worked. A 200 ms DOM-to-native tracker followed subsequent position changes. This is evidence for the combined workaround, not proof that the tracker alone or any isolated step repairs every affected build.
